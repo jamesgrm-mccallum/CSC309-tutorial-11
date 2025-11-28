@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState} from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 const AuthContext = createContext(null);
@@ -17,59 +17,39 @@ export const AuthProvider = ({ children }) => {
     const navigate = useNavigate();
     const [user, setUser] = useState(null);
 
-    const fetchUserProfile = async (token) => {
+    const loadUser = useCallback(async () => {
+        const token = localStorage.getItem('token');
+        if (!token) {
+            setUser(null);
+            return;
+        }
+
         try {
             const response = await fetch(`${BACKEND_URL}/user/me`, {
+                method: 'GET',
                 headers: {
-                    Authorization: `Bearer ${token}`
+                    'Content-Type': 'application/json',
+                    'Authorization': `${token}`
                 }
             });
 
             if (!response.ok) {
-                return null;
+                localStorage.removeItem('token');
+                setUser(null);
+                return;
             }
 
             const data = await response.json();
-            return data.user;
+            setUser(data.user ?? null);
+        } catch (error) {
+            localStorage.removeItem('token');
+            setUser(null);
         }
-        catch (error) {
-            return null;
-        }
-    };
+    }, [setUser]);
 
     useEffect(() => {
-        const token = localStorage.getItem("token");
-        let isMounted = true;
-
-        const populateUser = async () => {
-            if (!token) {
-                if (isMounted) {
-                    setUser(null);
-                }
-                return;
-            }
-
-            const profile = await fetchUserProfile(token);
-
-            if (!isMounted) {
-                return;
-            }
-
-            if (!profile) {
-                localStorage.removeItem("token");
-                setUser(null);
-            }
-            else {
-                setUser(profile);
-            }
-        };
-
-        populateUser();
-
-        return () => {
-            isMounted = false;
-        };
-    }, []);
+        loadUser();
+    }, [loadUser]);
 
     /*
      * Logout the currently authenticated user.
@@ -77,8 +57,10 @@ export const AuthProvider = ({ children }) => {
      * @remarks This function will always navigate to "/".
      */
     const logout = () => {
-        localStorage.removeItem("token");
+        
+        localStorage.removeItem('token');
         setUser(null);
+
         navigate("/");
     };
 
@@ -90,68 +72,68 @@ export const AuthProvider = ({ children }) => {
      * @param {string} password - The password of the user.
      * @returns {string} - Upon failure, Returns an error message.
      */
-    const login = async (username, password) => {
+    const login = async (username, password, redirectPath = "/profile") => {
+        
+        const userData = {username: username, password: password};
+
         try {
             const response = await fetch(`${BACKEND_URL}/login`, {
-                method: "POST",
+                method: 'POST', 
                 headers: {
-                    "Content-Type": "application/json"
+                    'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ username, password })
+                body: JSON.stringify(userData)
             });
+            
+            if (!response.ok){
+                const error = await response.json(); 
+                return error.message;   
+            }
 
             const data = await response.json();
+            const token = data.token;
 
-            if (!response.ok) {
-                return data.message || "Unable to login";
+            if (!token) {
+                return "Invalid server response.";
             }
 
-            localStorage.setItem("token", data.token);
+            localStorage.setItem("token", token);
+            await loadUser();
 
-            const profile = await fetchUserProfile(data.token);
+            navigate(redirectPath);
 
-            if (!profile) {
-                localStorage.removeItem("token");
-                return "Unable to retrieve user information";
-            }
-
-            setUser(profile);
-            navigate("/profile");
             return "";
-        }
-        catch (error) {
-            return "Unable to login right now";
+        } catch (error) {
+            return "Unable to login. Please try again.";
         }
     };
 
     /**
      * Registers a new user. 
      * 
-     * @remarks Upon success, navigates to "/success".
+     * @remarks Upon success, navigates to "/".
      * @param {Object} userData - The data of the user to register.
      * @returns {string} - Upon failure, returns an error message.
      */
     const register = async (userData) => {
         try {
             const response = await fetch(`${BACKEND_URL}/register`, {
-                method: "POST",
+                method: 'POST',
                 headers: {
-                    "Content-Type": "application/json"
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(userData)
             });
 
-            const data = await response.json();
-
             if (!response.ok) {
-                return data.message || "Unable to register";
+                const error = await response.json();
+                return error.message;
             }
 
-            navigate("/success");
-            return "";
-        }
-        catch (error) {
-            return "Unable to register right now";
+            const { username, password } = userData;
+            return await login(username, password, "/");
+        } catch (error) {
+            return "Unable to register. Please try again.";
         }
     };
 
